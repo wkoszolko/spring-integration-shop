@@ -5,14 +5,13 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.integration.channel.DirectChannel;
 import org.springframework.integration.dsl.IntegrationFlow;
-import org.springframework.integration.dsl.IntegrationFlows;
 import org.springframework.integration.dsl.support.Consumer;
 
 import javax.jms.ConnectionFactory;
 import javax.jms.Queue;
 
+import static org.springframework.integration.dsl.IntegrationFlows.*;
 import static org.springframework.integration.dsl.jms.Jms.messageDriverChannelAdapter;
 import static org.springframework.integration.dsl.jms.Jms.outboundAdapter;
 
@@ -34,39 +33,32 @@ public class OrderFlows {
         return new ActiveMQQueue(ORDER_CONFIRMATION_QUEUE);
     }
 
-    @Bean(name = "confirmationChannel")
-    public DirectChannel confirmationChannel() {
-        return new DirectChannel();
-    }
-
     @Bean(name = "orderFlow")
     public IntegrationFlow orderFlow() {
-        return IntegrationFlows
-                .from(messageDriverChannelAdapter(connectionFactory).destination(orderQueue()))
+        //noinspection unchecked
+        return from(messageDriverChannelAdapter(connectionFactory).destination(orderQueue()))
                 .filter("@orderValidator.validate(payload)")
                 .split("payload.items", (Consumer) null)
                 .filter("@warehouseCheckService.isAvailable(payload)")
                 .routeToRecipients(r -> r
                         .recipientFlow("payload.isSimCard()", subFlow -> subFlow
                                 .handle("discountService", "addSimDiscount")
-                                .channel("confirmationChannel"))
+                                .channel("confirmation.input"))
                         .recipientFlow("payload.isSmartphone()", subFlow -> subFlow
                                 .handle("discountService", "addPhoneDiscount")
-                                .channel("confirmationChannel"))
+                                .channel("confirmation.input"))
                         .recipientFlow("payload.isTablet()", subFlow -> subFlow
                                 .handle("discountService", "addTabletDiscount")
-                                .channel("confirmationChannel")))
+                                .channel("confirmation.input")))
                 .get();
     }
 
-    @Bean(name = "confirmationFlow")
-    public IntegrationFlow confirmationFlow() {
-        return IntegrationFlows
-                .from("confirmationChannel")
+    @Bean
+    public IntegrationFlow confirmation() {
+        return f -> f
                 .aggregate()
                 .handle("summaryService", "sumUp")
-                .handle(outboundAdapter(connectionFactory).destination(confirmationQueue()))
-                .get();
+                .handle(outboundAdapter(connectionFactory).destination(confirmationQueue()));
     }
 
 }
